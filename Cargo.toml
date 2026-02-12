@@ -4,6 +4,7 @@ description = "A simple CLI dice roller"
 repository = "https://github.com/AlecGhost/roll"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 
 [[bin]]
 name = "roll"
