@@ -54,6 +54,11 @@ fn main() {
                     process::exit(1);
                 }
                 
+                if request.sides == 0 {
+                    eprintln!("Error: Dice cannot have 0 sides.");
+                    process::exit(1);
+                }
+
                 let mut rng = rand::thread_rng();
                 for _ in 0..request.count {
                     let roll = rng.gen_range(1..=request.sides);

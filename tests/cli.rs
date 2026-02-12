@@ -59,3 +59,12 @@ fn test_partial_valid_arg() {
         .failure()
         .stderr(predicate::str::contains("Error: Invalid dice format"));
 }
+
+#[test]
+fn test_zero_sides() {
+    let mut cmd = Command::cargo_bin("roll").unwrap();
+    cmd.arg("2d0")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error: Dice cannot have 0 sides."));
+}
