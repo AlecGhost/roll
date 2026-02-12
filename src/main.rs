@@ -7,6 +7,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::digit1,
     combinator::{map_res, opt},
+    sequence::pair,
 };
 use rand::Rng;
 use std::process;
@@ -29,32 +30,41 @@ enum RollMode {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct DiceRequest {
-    count: u64,
-    sides: u64,
+    count: i64,
+    sides: i64,
     mode: RollMode,
+    modifier: i64,
 }
 
 struct RollResult {
-    sides: u64,
+    sides: i64,
     mode: RollMode,
-    kept: u64,
-    dropped: Option<u64>,
+    kept: i64,
+    dropped: Option<i64>,
+    modifier: i64,
 }
 
-fn parse_u64(input: &str) -> IResult<&str, u64> {
+fn parse_i64(input: &str) -> IResult<&str, i64> {
     map_res(digit1, str::parse)(input)
 }
 
 fn parse_dice_expression(input: &str) -> IResult<&str, DiceRequest> {
-    let (input, count) = opt(parse_u64)(input)?;
+    let (input, count) = opt(parse_i64)(input)?;
     let (input, _) = tag("d")(input)?;
-    let (input, sides) = parse_u64(input)?;
+    let (input, sides) = parse_i64(input)?;
     let (input, mode_char) = opt(alt((tag("a"), tag("d"))))(input)?;
+    let (input, mod_pair) = opt(pair(alt((tag("+"), tag("-"))), parse_i64))(input)?;
 
     let mode = match mode_char {
         Some("a") => RollMode::Advantage,
         Some("d") => RollMode::Disadvantage,
         _ => RollMode::Normal,
+    };
+
+    let modifier = match mod_pair {
+        Some(("+", val)) => val,
+        Some(("-", val)) => -val,
+        _ => 0,
     };
 
     Ok((
@@ -63,6 +73,7 @@ fn parse_dice_expression(input: &str) -> IResult<&str, DiceRequest> {
             count: count.unwrap_or(1),
             sides,
             mode,
+            modifier,
         },
     ))
 }
@@ -83,8 +94,12 @@ fn parse_and_validate(s: &str) -> Result<DiceRequest> {
         );
     }
 
-    if request.sides == 0 {
-        bail!("Error: Dice cannot have 0 sides.");
+    if request.sides <= 0 {
+        bail!("Error: Dice cannot have 0 or fewer sides.");
+    }
+
+    if request.count <= 0 {
+        bail!("Error: Dice count must be greater than 0.");
     }
 
     Ok(request)
@@ -101,16 +116,18 @@ fn roll_dice(requests: &[DiceRequest]) -> Vec<RollResult> {
                     RollMode::Normal => RollResult {
                         sides: req.sides,
                         mode: req.mode,
-                        kept: r1,
+                        kept: r1 + req.modifier,
                         dropped: None,
+                        modifier: req.modifier,
                     },
                     RollMode::Advantage => {
                         let r2 = rng.gen_range(1..=req.sides);
                         RollResult {
                             sides: req.sides,
                             mode: req.mode,
-                            kept: r1.max(r2),
-                            dropped: Some(r1.min(r2)),
+                            kept: r1.max(r2) + req.modifier,
+                            dropped: Some(r1.min(r2) + req.modifier),
+                            modifier: req.modifier,
                         }
                     }
                     RollMode::Disadvantage => {
@@ -118,8 +135,9 @@ fn roll_dice(requests: &[DiceRequest]) -> Vec<RollResult> {
                         RollResult {
                             sides: req.sides,
                             mode: req.mode,
-                            kept: r1.min(r2),
-                            dropped: Some(r1.max(r2)),
+                            kept: r1.min(r2) + req.modifier,
+                            dropped: Some(r1.max(r2) + req.modifier),
+                            modifier: req.modifier,
                         }
                     }
                 }
@@ -142,7 +160,7 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
     let mut table = Table::new();
     table.set_header(vec!["Die", "Roll"]);
 
-    let total_sum: u64 = results.iter().map(|res| res.kept).sum();
+    let total_sum: i64 = results.iter().map(|res| res.kept).sum();
 
     for res in results {
         let roll_str = match res.dropped {
@@ -154,7 +172,17 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
             RollMode::Advantage => "a",
             RollMode::Disadvantage => "d",
         };
-        table.add_row(vec![format!("d{}{}", res.sides, mode_str), roll_str]);
+        let mod_str = if res.modifier > 0 {
+            format!("+{}", res.modifier)
+        } else if res.modifier < 0 {
+            res.modifier.to_string()
+        } else {
+            String::new()
+        };
+        table.add_row(vec![
+            format!("d{}{}{}", res.sides, mode_str, mod_str),
+            roll_str,
+        ]);
     }
 
     table.add_row(vec!["Total", &total_sum.to_string()]);
@@ -187,7 +215,8 @@ mod tests {
             DiceRequest {
                 count: 1,
                 sides: 20,
-                mode: RollMode::Normal
+                mode: RollMode::Normal,
+                modifier: 0,
             }
         );
     }
@@ -200,7 +229,8 @@ mod tests {
             DiceRequest {
                 count: 1,
                 sides: 20,
-                mode: RollMode::Advantage
+                mode: RollMode::Advantage,
+                modifier: 0,
             }
         );
     }
@@ -213,7 +243,8 @@ mod tests {
             DiceRequest {
                 count: 1,
                 sides: 20,
-                mode: RollMode::Disadvantage
+                mode: RollMode::Disadvantage,
+                modifier: 0,
             }
         );
     }
@@ -226,7 +257,8 @@ mod tests {
             DiceRequest {
                 count: 1,
                 sides: 6,
-                mode: RollMode::Normal
+                mode: RollMode::Normal,
+                modifier: 0,
             }
         );
     }
@@ -239,7 +271,50 @@ mod tests {
             DiceRequest {
                 count: 10,
                 sides: 100,
-                mode: RollMode::Normal
+                mode: RollMode::Normal,
+                modifier: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dice_with_modifier() {
+        let (_, res) = parse_dice_expression("1d20+5").unwrap();
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20,
+                mode: RollMode::Normal,
+                modifier: 5,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dice_with_negative_modifier() {
+        let (_, res) = parse_dice_expression("1d20-2").unwrap();
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20,
+                mode: RollMode::Normal,
+                modifier: -2,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dice_advantage_modifier() {
+        let (_, res) = parse_dice_expression("1d20a+5").unwrap();
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20,
+                mode: RollMode::Advantage,
+                modifier: 5,
             }
         );
     }
@@ -294,6 +369,9 @@ mod tests {
     #[test]
     fn test_zero_sides() {
         let err = execute_roll(&["2d0".to_string()]).unwrap_err();
-        assert!(err.to_string().contains("Dice cannot have 0 sides"));
+        assert!(
+            err.to_string()
+                .contains("Dice cannot have 0 or fewer sides")
+        );
     }
 }
