@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.21", features = ["derive"] }
+rand = "0.8.5"
+comfy-table = "7.1.3"
+nom = "7.1.3"
+anyhow = "1.0.94"
+
+[dev-dependencies]
+assert_cmd = "2.0.16"
+predicates = "3.1.2"
