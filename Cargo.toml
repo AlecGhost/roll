@@ -1,7 +1,13 @@
 [package]
-name = "roll"
+name = "alecghost-roll"
+description = "A simple CLI dice roller"
+repository = "https://github.com/AlecGhost/roll"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "roll"
+path = "./src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.21", features = ["derive"] }

@@ -42,5 +42,11 @@ Output looks like this:
 ## install
 
 ```bash
-cargo install roll
+cargo install alecghost-roll
+```
+
+or with this repo checked out locally
+
+```bash
+cargo install --path .
 ```
