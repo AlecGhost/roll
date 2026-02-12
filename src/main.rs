@@ -70,8 +70,6 @@ fn roll_dice(requests: &[DiceRequest]) -> Vec<(u32, u32)> {
     requests
         .iter()
         .flat_map(|req| {
-            // Capture a thread-local RNG for each batch of rolls or per roll.
-            // Since we are inside a lazy iterator, creating it inside is safe and correct.
             (0..req.count).map(move |_| {
                 let mut rng = rand::thread_rng();
                 (req.sides, rng.gen_range(1..=req.sides))
@@ -80,17 +78,14 @@ fn roll_dice(requests: &[DiceRequest]) -> Vec<(u32, u32)> {
         .collect()
 }
 
-fn run() -> Result<()> {
-    let args = Args::parse();
-
+fn execute_roll(dice_args: &[String]) -> Result<String> {
     // 1. Parse and Validate Inputs
-    let requests: Vec<DiceRequest> = args
-        .dice
+    let requests: Vec<DiceRequest> = dice_args
         .iter()
         .map(|s| parse_and_validate(s))
         .collect::<Result<_>>()?;
 
-    // 2. Perform Calculations (Side Effects)
+    // 2. Perform Calculations
     let results = roll_dice(&requests);
 
     // 3. Format Output
@@ -105,21 +100,25 @@ fn run() -> Result<()> {
 
     table.add_row(vec!["Total", &total_sum.to_string()]);
 
-    println!("{table}");
-
-    Ok(())
+    Ok(table.to_string())
 }
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("{}", e);
-        process::exit(1);
+    let args = Args::parse();
+    match execute_roll(&args.dice) {
+        Ok(output) => println!("{}", output),
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Parser Unit Tests ---
 
     #[test]
     fn test_parse_dice_simple() {
@@ -154,8 +153,43 @@ mod tests {
     #[test]
     fn test_parse_dice_invalid() {
         assert!(parse_dice_expression("invalid").is_err());
-        // valid prefix but remaining content check is done in parse_and_validate
         let (rem, _) = parse_dice_expression("1d20extra").unwrap();
         assert_eq!(rem, "extra");
+    }
+
+    // --- Integration Tests (using function calls) ---
+
+    #[test]
+    fn test_single_die() {
+        let output = execute_roll(&["1d20".to_string()]).unwrap();
+        assert!(output.contains("d20"));
+        assert!(output.contains("Die")); // Header
+        assert!(output.contains("Roll")); // Header
+    }
+
+    #[test]
+    fn test_multiple_dice() {
+        let output = execute_roll(&["2d6".to_string(), "1d10".to_string()]).unwrap();
+        assert!(output.contains("d6"));
+        assert!(output.contains("d10"));
+        assert!(output.contains("Total"));
+    }
+
+    #[test]
+    fn test_invalid_arg() {
+        let err = execute_roll(&["invalid".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("Failed to parse dice expression"));
+    }
+
+    #[test]
+    fn test_partial_valid_arg() {
+        let err = execute_roll(&["1d20extra".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("Invalid dice format"));
+    }
+
+    #[test]
+    fn test_zero_sides() {
+        let err = execute_roll(&["2d0".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("Dice cannot have 0 sides"));
     }
 }
