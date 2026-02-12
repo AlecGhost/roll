@@ -29,26 +29,26 @@ enum RollMode {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct DiceRequest {
-    count: u32,
-    sides: u32,
+    count: u64,
+    sides: u64,
     mode: RollMode,
 }
 
 struct RollResult {
-    sides: u32,
+    sides: u64,
     mode: RollMode,
-    kept: u32,
-    dropped: Option<u32>,
+    kept: u64,
+    dropped: Option<u64>,
 }
 
-fn parse_u32(input: &str) -> IResult<&str, u32> {
+fn parse_u64(input: &str) -> IResult<&str, u64> {
     map_res(digit1, str::parse)(input)
 }
 
 fn parse_dice_expression(input: &str) -> IResult<&str, DiceRequest> {
-    let (input, count) = opt(parse_u32)(input)?;
+    let (input, count) = opt(parse_u64)(input)?;
     let (input, _) = tag("d")(input)?;
-    let (input, sides) = parse_u32(input)?;
+    let (input, sides) = parse_u64(input)?;
     let (input, mode_char) = opt(alt((tag("a"), tag("d"))))(input)?;
 
     let mode = match mode_char {
@@ -142,7 +142,7 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
     let mut table = Table::new();
     table.set_header(vec!["Die", "Roll"]);
 
-    let total_sum: u64 = results.iter().map(|res| res.kept as u64).sum();
+    let total_sum: u64 = results.iter().map(|res| res.kept).sum();
 
     for res in results {
         let roll_str = match res.dropped {
