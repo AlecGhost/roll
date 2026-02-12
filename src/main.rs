@@ -161,6 +161,7 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
     table.set_header(vec!["Die", "Roll"]);
 
     let total_sum: i64 = results.iter().map(|res| res.kept).sum();
+    let result_count = results.len();
 
     for res in results {
         let roll_str = match res.dropped {
@@ -185,7 +186,9 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
         ]);
     }
 
-    table.add_row(vec!["Total", &total_sum.to_string()]);
+    if result_count > 1 {
+        table.add_row(vec!["Total", &total_sum.to_string()]);
+    }
 
     Ok(table.to_string())
 }
@@ -334,6 +337,7 @@ mod tests {
         assert!(output.contains("d20"));
         assert!(output.contains("Die")); // Header
         assert!(output.contains("Roll")); // Header
+        assert!(!output.contains("Total")); // Should not show Total for single roll
     }
 
     #[test]
@@ -348,7 +352,7 @@ mod tests {
     fn test_advantage_roll_execution() {
         let output = execute_roll(&["1d20a".to_string()]).unwrap();
         assert!(output.contains("d20a"));
-        assert!(output.contains("Total"));
+        assert!(!output.contains("Total")); // Should not show Total for single roll
         // We can't easily assert the values without parsing the table back, but we check if it runs.
         // We can possibly check for parentheses if we roll enough times or mock,
         // but for a formatted string check, existence of "d20a" is good.
