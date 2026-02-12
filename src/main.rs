@@ -1,10 +1,11 @@
+use anyhow::{Result, anyhow, bail};
 use clap::Parser;
 use comfy_table::Table;
 use nom::{
+    IResult,
     bytes::complete::tag,
     character::complete::digit1,
     combinator::{map_res, opt},
-    IResult,
 };
 use rand::Rng;
 use std::process;
@@ -18,7 +19,7 @@ struct Args {
     dice: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 struct DiceRequest {
     count: u32,
     sides: u32,
@@ -32,53 +33,88 @@ fn parse_dice_expression(input: &str) -> IResult<&str, DiceRequest> {
     let (input, count) = opt(parse_u32)(input)?;
     let (input, _) = tag("d")(input)?;
     let (input, sides) = parse_u32(input)?;
-    
-    Ok((input, DiceRequest {
-        count: count.unwrap_or(1),
-        sides,
-    }))
+
+    Ok((
+        input,
+        DiceRequest {
+            count: count.unwrap_or(1),
+            sides,
+        },
+    ))
+}
+
+fn parse_and_validate(s: &str) -> Result<DiceRequest> {
+    let (remainder, request) = parse_dice_expression(s).map_err(|_| {
+        anyhow!(
+            "Error: Failed to parse dice expression '{}'. Expected format 'NdS' (e.g. 1d20, 4d8).",
+            s
+        )
+    })?;
+
+    if !remainder.is_empty() {
+        bail!(
+            "Error: Invalid dice format '{}'. Unparsed content: '{}'",
+            s,
+            remainder
+        );
+    }
+
+    if request.sides == 0 {
+        bail!("Error: Dice cannot have 0 sides.");
+    }
+
+    Ok(request)
+}
+
+fn roll_dice(requests: &[DiceRequest]) -> Vec<(u32, u32)> {
+    requests
+        .iter()
+        .flat_map(|req| {
+            // Capture a thread-local RNG for each batch of rolls or per roll.
+            // Since we are inside a lazy iterator, creating it inside is safe and correct.
+            (0..req.count).map(move |_| {
+                let mut rng = rand::thread_rng();
+                (req.sides, rng.gen_range(1..=req.sides))
+            })
+        })
+        .collect()
+}
+
+fn run() -> Result<()> {
+    let args = Args::parse();
+
+    // 1. Parse and Validate Inputs
+    let requests: Vec<DiceRequest> = args
+        .dice
+        .iter()
+        .map(|s| parse_and_validate(s))
+        .collect::<Result<_>>()?;
+
+    // 2. Perform Calculations (Side Effects)
+    let results = roll_dice(&requests);
+
+    // 3. Format Output
+    let mut table = Table::new();
+    table.set_header(vec!["Die", "Roll"]);
+
+    let total_sum: u64 = results.iter().map(|(_, roll)| *roll as u64).sum();
+
+    for (sides, roll) in results {
+        table.add_row(vec![format!("d{}", sides), roll.to_string()]);
+    }
+
+    table.add_row(vec!["Total", &total_sum.to_string()]);
+
+    println!("{table}");
+
+    Ok(())
 }
 
 fn main() {
-    let args = Args::parse();
-    let mut table = Table::new();
-    table.set_header(vec!["Die", "Roll"]);
-    
-    let mut total_sum: u64 = 0;
-    
-    for dice_str in &args.dice {
-        match parse_dice_expression(dice_str) {
-            Ok((remainder, request)) => {
-                if !remainder.is_empty() {
-                    eprintln!("Error: Invalid dice format '{}'. Unparsed content: '{}'", dice_str, remainder);
-                    process::exit(1);
-                }
-                
-                if request.sides == 0 {
-                    eprintln!("Error: Dice cannot have 0 sides.");
-                    process::exit(1);
-                }
-
-                let mut rng = rand::thread_rng();
-                for _ in 0..request.count {
-                    let roll = rng.gen_range(1..=request.sides);
-                    total_sum += roll as u64;
-                    table.add_row(vec![
-                        format!("d{}", request.sides),
-                        format!("{}", roll),
-                    ]);
-                }
-            },
-            Err(_) => {
-                eprintln!("Error: Failed to parse dice expression '{}'. Expected format 'NdS' (e.g. 1d20, 4d8).", dice_str);
-                process::exit(1);
-            }
-        }
+    if let Err(e) = run() {
+        eprintln!("{}", e);
+        process::exit(1);
     }
-    
-    table.add_row(vec!["Total", &total_sum.to_string()]);
-    
-    println!("{table}");
 }
 
 #[cfg(test)]
@@ -88,7 +124,13 @@ mod tests {
     #[test]
     fn test_parse_dice_simple() {
         let (_, res) = parse_dice_expression("1d20").unwrap();
-        assert_eq!(res, DiceRequest { count: 1, sides: 20 });
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20
+            }
+        );
     }
 
     #[test]
@@ -100,13 +142,19 @@ mod tests {
     #[test]
     fn test_parse_dice_multiple() {
         let (_, res) = parse_dice_expression("10d100").unwrap();
-        assert_eq!(res, DiceRequest { count: 10, sides: 100 });
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 10,
+                sides: 100
+            }
+        );
     }
 
     #[test]
     fn test_parse_dice_invalid() {
         assert!(parse_dice_expression("invalid").is_err());
-        // valid prefix but remaining content check is done in main, parser returns residual
+        // valid prefix but remaining content check is done in parse_and_validate
         let (rem, _) = parse_dice_expression("1d20extra").unwrap();
         assert_eq!(rem, "extra");
     }

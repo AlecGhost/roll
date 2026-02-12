@@ -48,7 +48,9 @@ fn test_invalid_arg() {
     cmd.arg("invalid")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Error: Failed to parse dice expression"));
+        .stderr(predicate::str::contains(
+            "Error: Failed to parse dice expression",
+        ));
 }
 
 #[test]
