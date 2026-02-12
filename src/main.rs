@@ -3,6 +3,7 @@ use clap::Parser;
 use comfy_table::Table;
 use nom::{
     IResult,
+    branch::alt,
     bytes::complete::tag,
     character::complete::digit1,
     combinator::{map_res, opt},
@@ -20,9 +21,24 @@ struct Args {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+enum RollMode {
+    Normal,
+    Advantage,
+    Disadvantage,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 struct DiceRequest {
     count: u32,
     sides: u32,
+    mode: RollMode,
+}
+
+struct RollResult {
+    sides: u32,
+    mode: RollMode,
+    kept: u32,
+    dropped: Option<u32>,
 }
 
 fn parse_u32(input: &str) -> IResult<&str, u32> {
@@ -33,12 +49,20 @@ fn parse_dice_expression(input: &str) -> IResult<&str, DiceRequest> {
     let (input, count) = opt(parse_u32)(input)?;
     let (input, _) = tag("d")(input)?;
     let (input, sides) = parse_u32(input)?;
+    let (input, mode_char) = opt(alt((tag("a"), tag("d"))))(input)?;
+
+    let mode = match mode_char {
+        Some("a") => RollMode::Advantage,
+        Some("d") => RollMode::Disadvantage,
+        _ => RollMode::Normal,
+    };
 
     Ok((
         input,
         DiceRequest {
             count: count.unwrap_or(1),
             sides,
+            mode,
         },
     ))
 }
@@ -66,13 +90,39 @@ fn parse_and_validate(s: &str) -> Result<DiceRequest> {
     Ok(request)
 }
 
-fn roll_dice(requests: &[DiceRequest]) -> Vec<(u32, u32)> {
+fn roll_dice(requests: &[DiceRequest]) -> Vec<RollResult> {
     requests
         .iter()
         .flat_map(|req| {
             (0..req.count).map(move |_| {
                 let mut rng = rand::thread_rng();
-                (req.sides, rng.gen_range(1..=req.sides))
+                let r1 = rng.gen_range(1..=req.sides);
+                match req.mode {
+                    RollMode::Normal => RollResult {
+                        sides: req.sides,
+                        mode: req.mode,
+                        kept: r1,
+                        dropped: None,
+                    },
+                    RollMode::Advantage => {
+                        let r2 = rng.gen_range(1..=req.sides);
+                        RollResult {
+                            sides: req.sides,
+                            mode: req.mode,
+                            kept: r1.max(r2),
+                            dropped: Some(r1.min(r2)),
+                        }
+                    }
+                    RollMode::Disadvantage => {
+                        let r2 = rng.gen_range(1..=req.sides);
+                        RollResult {
+                            sides: req.sides,
+                            mode: req.mode,
+                            kept: r1.min(r2),
+                            dropped: Some(r1.max(r2)),
+                        }
+                    }
+                }
             })
         })
         .collect()
@@ -92,10 +142,19 @@ fn execute_roll(dice_args: &[String]) -> Result<String> {
     let mut table = Table::new();
     table.set_header(vec!["Die", "Roll"]);
 
-    let total_sum: u64 = results.iter().map(|(_, roll)| *roll as u64).sum();
+    let total_sum: u64 = results.iter().map(|res| res.kept as u64).sum();
 
-    for (sides, roll) in results {
-        table.add_row(vec![format!("d{}", sides), roll.to_string()]);
+    for res in results {
+        let roll_str = match res.dropped {
+            Some(d) => format!("{} ({})", res.kept, d),
+            None => res.kept.to_string(),
+        };
+        let mode_str = match res.mode {
+            RollMode::Normal => "",
+            RollMode::Advantage => "a",
+            RollMode::Disadvantage => "d",
+        };
+        table.add_row(vec![format!("d{}{}", res.sides, mode_str), roll_str]);
     }
 
     table.add_row(vec!["Total", &total_sum.to_string()]);
@@ -127,7 +186,34 @@ mod tests {
             res,
             DiceRequest {
                 count: 1,
-                sides: 20
+                sides: 20,
+                mode: RollMode::Normal
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dice_advantage() {
+        let (_, res) = parse_dice_expression("1d20a").unwrap();
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20,
+                mode: RollMode::Advantage
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_dice_disadvantage() {
+        let (_, res) = parse_dice_expression("1d20d").unwrap();
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 20,
+                mode: RollMode::Disadvantage
             }
         );
     }
@@ -135,7 +221,14 @@ mod tests {
     #[test]
     fn test_parse_dice_implicit_count() {
         let (_, res) = parse_dice_expression("d6").unwrap();
-        assert_eq!(res, DiceRequest { count: 1, sides: 6 });
+        assert_eq!(
+            res,
+            DiceRequest {
+                count: 1,
+                sides: 6,
+                mode: RollMode::Normal
+            }
+        );
     }
 
     #[test]
@@ -145,7 +238,8 @@ mod tests {
             res,
             DiceRequest {
                 count: 10,
-                sides: 100
+                sides: 100,
+                mode: RollMode::Normal
             }
         );
     }
@@ -173,6 +267,16 @@ mod tests {
         assert!(output.contains("d6"));
         assert!(output.contains("d10"));
         assert!(output.contains("Total"));
+    }
+
+    #[test]
+    fn test_advantage_roll_execution() {
+        let output = execute_roll(&["1d20a".to_string()]).unwrap();
+        assert!(output.contains("d20a"));
+        assert!(output.contains("Total"));
+        // We can't easily assert the values without parsing the table back, but we check if it runs.
+        // We can possibly check for parentheses if we roll enough times or mock,
+        // but for a formatted string check, existence of "d20a" is good.
     }
 
     #[test]
